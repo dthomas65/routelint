@@ -28,6 +28,12 @@ DELETE /users/:id
 GET  /users/:id/posts/:postId
 ```
 
+A parameter can carry a regex constraint in parentheses, the way frameworks
+like Fastify or Express-with-`path-to-regexp` write it: `:id(\d+)`. routelint
+checks that the pattern is a name followed by a valid, non-empty regular
+expression with a matching closing paren; it doesn't yet use the pattern
+itself to tell two otherwise-identical routes apart (see below).
+
 ## Usage
 
 ```
@@ -82,6 +88,7 @@ fail the run).
 - trailing slash
 - empty path segment (`//`)
 - empty or invalid parameter name
+- malformed, empty, or invalid parameter pattern (`:id(`, `:id()`, `:id(\d+++)`)
 - duplicate parameter name within one path
 - duplicate route (same method and path)
 - ambiguous route (same method and shape, different parameter names)
@@ -92,6 +99,10 @@ It only understands its own flat text format. It doesn't read your actual
 Express/Koa/whatever route registrations, and it doesn't know that
 `/users/:id` and `/users/new` can collide depending on registration order.
 Both are worth having eventually; neither is here yet.
+
+It also treats `:id` and `:id(\d+)` as the same shape when checking for
+duplicate and ambiguous routes, since it doesn't yet reason about whether one
+pattern is a subset of another.
 
 Requires Node 18+ and a TypeScript compiler to build. Nothing in `src/`
 depends on anything beyond Node's standard library.

@@ -18,8 +18,7 @@ export function checkRoutes(routes: Route[]): Finding[] {
 
   for (const route of routes) {
     findings.push(...checkMethod(route))
-    findings.push(...checkPathSyntax(route))
-    findings.push(...checkDuplicateParams(route))
+    findings.push(...checkPath(route))
   }
 
   findings.push(...checkDuplicateRoutes(routes))
@@ -55,7 +54,25 @@ function checkMethod(route: Route): Finding[] {
   return []
 }
 
-function checkPathSyntax(route: Route): Finding[] {
+const PARAM_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+interface ParsedParam {
+  name: string
+  pattern: string | null
+}
+
+// A param segment is ":name" or ":name(pattern)", e.g. ":id(\d+)". The
+// pattern is whatever sits between the first "(" and the final ")" - nested
+// parens in the pattern itself aren't supported.
+function parseParamSegment(segment: string): ParsedParam | { malformed: true } {
+  const body = segment.slice(1)
+  const parenIndex = body.indexOf('(')
+  if (parenIndex === -1) return { name: body, pattern: null }
+  if (!body.endsWith(')')) return { malformed: true }
+  return { name: body.slice(0, parenIndex), pattern: body.slice(parenIndex + 1, -1) }
+}
+
+function checkPath(route: Route): Finding[] {
   const findings: Finding[] = []
   const { path, pathCol, line } = route
 
@@ -93,10 +110,27 @@ function checkPathSyntax(route: Route): Finding[] {
     })
   }
 
+  const seenParams = new Set<string>()
   let offset = 0
   for (const segment of path.split('/')) {
     if (segment.startsWith(':')) {
-      const name = segment.slice(1)
+      const parsed = parseParamSegment(segment)
+
+      if ('malformed' in parsed) {
+        findings.push({
+          line,
+          col: pathCol + offset,
+          length: segment.length,
+          severity: 'error',
+          rule: 'malformed-param-pattern',
+          message: `parameter "${segment}" has an unclosed "(" in its pattern`,
+        })
+        offset += segment.length + 1
+        continue
+      }
+
+      const { name, pattern } = parsed
+
       if (name.length === 0) {
         findings.push({
           line,
@@ -106,42 +140,55 @@ function checkPathSyntax(route: Route): Finding[] {
           rule: 'empty-param-name',
           message: `path "${path}" has a parameter with no name (just ":")`,
         })
-      } else if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      } else if (!PARAM_NAME_RE.test(name)) {
         findings.push({
           line,
           col: pathCol + offset,
-          length: segment.length,
+          length: 1 + name.length,
           severity: 'error',
           rule: 'invalid-param-name',
           message: `":${name}" is not a valid parameter name (must match [A-Za-z_][A-Za-z0-9_]*)`,
         })
+      } else if (pattern !== null) {
+        const patternCol = pathCol + offset + 1 + name.length + 1
+        if (pattern.length === 0) {
+          findings.push({
+            line,
+            col: patternCol - 1,
+            length: 2,
+            severity: 'error',
+            rule: 'empty-param-pattern',
+            message: `parameter ":${name}" has an empty pattern ("()")`,
+          })
+        } else {
+          try {
+            new RegExp(pattern)
+          } catch (err) {
+            findings.push({
+              line,
+              col: patternCol,
+              length: pattern.length,
+              severity: 'error',
+              rule: 'invalid-param-pattern',
+              message: `parameter ":${name}" has an invalid regex pattern "${pattern}": ${(err as Error).message}`,
+            })
+          }
+        }
       }
-    }
-    offset += segment.length + 1
-  }
 
-  return findings
-}
-
-function checkDuplicateParams(route: Route): Finding[] {
-  const findings: Finding[] = []
-  const seen = new Set<string>()
-  let offset = 0
-
-  for (const segment of route.path.split('/')) {
-    if (segment.startsWith(':') && segment.length > 1) {
-      const name = segment.slice(1)
-      if (seen.has(name)) {
-        findings.push({
-          line: route.line,
-          col: route.pathCol + offset,
-          length: segment.length,
-          severity: 'error',
-          rule: 'duplicate-param-name',
-          message: `parameter ":${name}" is used more than once in path "${route.path}"`,
-        })
-      } else {
-        seen.add(name)
+      if (name.length > 0) {
+        if (seenParams.has(name)) {
+          findings.push({
+            line,
+            col: pathCol + offset,
+            length: 1 + name.length,
+            severity: 'error',
+            rule: 'duplicate-param-name',
+            message: `parameter ":${name}" is used more than once in path "${path}"`,
+          })
+        } else {
+          seenParams.add(name)
+        }
       }
     }
     offset += segment.length + 1
@@ -179,5 +226,5 @@ function checkDuplicateRoutes(routes: Route[]): Finding[] {
 }
 
 function normalizePath(path: string): string {
-  return path.replace(/:[A-Za-z_][A-Za-z0-9_]*/g, ':param')
+  return path.replace(/:[A-Za-z_][A-Za-z0-9_]*(\([^)]*\))?/g, ':param')
 }
