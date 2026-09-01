@@ -92,17 +92,18 @@ fail the run).
 - duplicate parameter name within one path
 - duplicate route (same method and path)
 - ambiguous route (same method and shape, different parameter names)
+- route shadowed by an earlier, more generic route: `GET /users/:id`
+  declared before `GET /users/new` means the second line never matches,
+  since the router tries routes in order and the param swallows `new` first
 
 ## What this doesn't do yet
 
 It only understands its own flat text format. It doesn't read your actual
-Express/Koa/whatever route registrations, and it doesn't know that
-`/users/:id` and `/users/new` can collide depending on registration order.
-Both are worth having eventually; neither is here yet.
+Express/Koa/whatever route registrations.
 
 It also treats `:id` and `:id(\d+)` as the same shape when checking for
-duplicate and ambiguous routes, since it doesn't yet reason about whether one
-pattern is a subset of another.
+duplicate, ambiguous, and shadowed routes, since it doesn't yet reason about
+whether one pattern is a subset of another.
 
 Requires Node 18+ and a TypeScript compiler to build. Nothing in `src/`
 depends on anything beyond Node's standard library.

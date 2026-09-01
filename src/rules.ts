@@ -22,6 +22,7 @@ export function checkRoutes(routes: Route[]): Finding[] {
   }
 
   findings.push(...checkDuplicateRoutes(routes))
+  findings.push(...checkShadowedRoutes(routes))
 
   return findings.sort((a, b) => a.line - b.line || a.col - b.col)
 }
@@ -227,4 +228,82 @@ function checkDuplicateRoutes(routes: Route[]): Finding[] {
 
 function normalizePath(path: string): string {
   return path.replace(/:[A-Za-z_][A-Za-z0-9_]*(\([^)]*\))?/g, ':param')
+}
+
+type SegmentComparison = 'distinct' | 'duplicate' | 'shadow'
+
+// Same idea as normalizePath but segment by segment, and it distinguishes
+// "same shape" (already caught by checkDuplicateRoutes) from "earlier route
+// has a param where the later one has a static segment", which is the
+// registration-order bug: a router tries routes in declaration order and
+// the param swallows the static value before the later route ever gets a
+// chance to match.
+function compareSegments(earlier: string[], later: string[]): SegmentComparison {
+  let hasShadowingSegment = false
+
+  for (let i = 0; i < earlier.length; i++) {
+    const a = earlier[i]
+    const b = later[i]
+    const aIsParam = a.startsWith(':')
+    const bIsParam = b.startsWith(':')
+
+    if (!aIsParam && !bIsParam) {
+      if (a !== b) return 'distinct'
+      continue
+    }
+
+    if (aIsParam && bIsParam) continue
+
+    if (aIsParam && !bIsParam) {
+      hasShadowingSegment = true
+      continue
+    }
+
+    // earlier is static, later is param: the earlier route only intercepts
+    // that one literal value, the later route stays reachable for everything
+    // else, so this isn't the shadowing bug.
+    return 'distinct'
+  }
+
+  return hasShadowingSegment ? 'shadow' : 'duplicate'
+}
+
+function checkShadowedRoutes(routes: Route[]): Finding[] {
+  const findings: Finding[] = []
+
+  for (let j = 0; j < routes.length; j++) {
+    const later = routes[j]
+    const laterMethod = later.method.toUpperCase()
+    const laterSegments = later.path.split('/')
+
+    for (let i = 0; i < j; i++) {
+      const earlier = routes[i]
+      if (earlier.method.toUpperCase() !== laterMethod) continue
+
+      const earlierSegments = earlier.path.split('/')
+      if (earlierSegments.length !== laterSegments.length) continue
+
+      const comparison = compareSegments(earlierSegments, laterSegments)
+      if (comparison === 'distinct') continue
+
+      if (comparison === 'shadow') {
+        findings.push({
+          line: later.line,
+          col: later.methodCol,
+          length: later.method.length + 1 + later.path.length,
+          severity: 'error',
+          rule: 'shadowed-route',
+          message: `route "${laterMethod} ${later.path}" is shadowed by "${earlier.method.toUpperCase()} ${earlier.path}" declared on line ${earlier.line}, which matches first and will always run instead`,
+        })
+      }
+
+      // Whether this earlier route shadowed the later one or is just an
+      // exact duplicate (already reported by checkDuplicateRoutes), it's
+      // the first route that would actually claim this request, so there's
+      // no point comparing against anything declared after it.
+      break
+    }
+  }
+
+  return findings
 }
