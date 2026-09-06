@@ -1,14 +1,58 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs'
 import { parseRoutes } from './parser.js'
-import { checkRoutes } from './rules.js'
+import { checkRoutes, type Severity } from './rules.js'
 
-function main(): void {
-  const filePath = process.argv[2]
-  if (!filePath) {
-    process.stderr.write('usage: routelint <routes-file>\n')
+type OutputFormat = 'text' | 'json'
+
+interface CliOptions {
+  filePath: string
+  format: OutputFormat
+}
+
+interface Problem {
+  line: number
+  col: number
+  length: number
+  severity: Severity
+  rule: string
+  message: string
+}
+
+function parseArgs(argv: string[]): CliOptions {
+  let format: OutputFormat = 'text'
+  let filePath: string | undefined
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]
+    if (arg === '--format') {
+      format = parseFormat(argv[++i])
+    } else if (arg.startsWith('--format=')) {
+      format = parseFormat(arg.slice('--format='.length))
+    } else if (filePath === undefined) {
+      filePath = arg
+    } else {
+      process.stderr.write(`routelint: unexpected argument "${arg}"\n`)
+      process.exit(2)
+    }
+  }
+
+  if (filePath === undefined) {
+    process.stderr.write('usage: routelint [--format text|json] <routes-file>\n')
     process.exit(2)
   }
+
+  return { filePath, format }
+}
+
+function parseFormat(value: string | undefined): OutputFormat {
+  if (value === 'text' || value === 'json') return value
+  process.stderr.write(`routelint: unknown format "${value ?? ''}" (expected "text" or "json")\n`)
+  process.exit(2)
+}
+
+function main(): void {
+  const { filePath, format } = parseArgs(process.argv.slice(2))
 
   let source: string
   try {
@@ -23,18 +67,41 @@ function main(): void {
   const { routes, errors } = parseRoutes(source)
   const findings = checkRoutes(routes)
 
-  let errorCount = 0
-  let warningCount = 0
+  const problems: Problem[] = [
+    ...errors.map((error) => ({
+      line: error.line,
+      col: error.col,
+      length: error.length,
+      severity: 'error' as const,
+      rule: 'parse-error',
+      message: error.message,
+    })),
+    ...findings.map((finding) => ({
+      line: finding.line,
+      col: finding.col,
+      length: finding.length,
+      severity: finding.severity,
+      rule: finding.rule,
+      message: finding.message,
+    })),
+  ].sort((a, b) => a.line - b.line || a.col - b.col)
 
-  for (const error of errors) {
-    printProblem(filePath, lines, error.line, error.col, error.length, 'error', error.message)
-    errorCount++
+  const errorCount = problems.filter((p) => p.severity === 'error').length
+  const warningCount = problems.length - errorCount
+
+  if (format === 'json') {
+    process.stdout.write(
+      JSON.stringify(
+        { file: filePath, routesChecked: routes.length, problems, errorCount, warningCount },
+        null,
+        2
+      ) + '\n'
+    )
+    process.exit(errorCount > 0 ? 1 : 0)
   }
 
-  for (const finding of findings) {
-    printProblem(filePath, lines, finding.line, finding.col, finding.length, finding.severity, finding.message)
-    if (finding.severity === 'error') errorCount++
-    else warningCount++
+  for (const problem of problems) {
+    printProblem(filePath, lines, problem.line, problem.col, problem.length, problem.severity, problem.message)
   }
 
   if (errorCount === 0 && warningCount === 0) {

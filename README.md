@@ -80,6 +80,34 @@ routes.txt:5:25: error: parameter ":id" is used more than once in path "/users/:
 Exit code is 1 if any errors were found, 0 otherwise (warnings alone don't
 fail the run).
 
+### JSON output
+
+Pass `--format json` to get a single JSON document on stdout instead of the
+human-readable report, for editors and other tools to consume:
+
+```
+node dist/cli.js --format json routes.txt
+```
+
+```json
+{
+  "file": "routes.txt",
+  "routesChecked": 5,
+  "problems": [
+    { "line": 3, "col": 1, "length": 3, "severity": "warning", "rule": "method-case", "message": "HTTP method \"get\" should be uppercase (\"GET\")" },
+    { "line": 3, "col": 1, "length": 14, "severity": "error", "rule": "duplicate-route", "message": "route \"GET /users/:id\" duplicates the one declared on line 2" },
+    { "line": 4, "col": 12, "length": 2, "severity": "error", "rule": "empty-segment", "message": "path \"/users//bulk\" contains an empty segment (\"//\")" },
+    { "line": 5, "col": 25, "length": 3, "severity": "error", "rule": "duplicate-param-name", "message": "parameter \":id\" is used more than once in path \"/users/:id/comments/:id\"" }
+  ],
+  "errorCount": 3,
+  "warningCount": 1
+}
+```
+
+Parse errors and lint findings share the same shape (`rule` is
+`"parse-error"` for the former) and are sorted together by line and column,
+so a tool can walk `problems` in one pass without merging two lists itself.
+
 ## Checks implemented so far
 
 - unknown HTTP method
