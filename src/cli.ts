@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { parseRoutes } from './parser.js'
 import { checkRoutes, type Severity } from './rules.js'
 
-type OutputFormat = 'text' | 'json'
+type OutputFormat = 'text' | 'json' | 'yaml'
 
 interface CliOptions {
   filePath: string
@@ -38,7 +38,7 @@ function parseArgs(argv: string[]): CliOptions {
   }
 
   if (filePath === undefined) {
-    process.stderr.write('usage: routelint [--format text|json] <routes-file>\n')
+    process.stderr.write('usage: routelint [--format text|json|yaml] <routes-file>\n')
     process.exit(2)
   }
 
@@ -46,8 +46,8 @@ function parseArgs(argv: string[]): CliOptions {
 }
 
 function parseFormat(value: string | undefined): OutputFormat {
-  if (value === 'text' || value === 'json') return value
-  process.stderr.write(`routelint: unknown format "${value ?? ''}" (expected "text" or "json")\n`)
+  if (value === 'text' || value === 'json' || value === 'yaml') return value
+  process.stderr.write(`routelint: unknown format "${value ?? ''}" (expected "text", "json", or "yaml")\n`)
   process.exit(2)
 }
 
@@ -89,14 +89,9 @@ function main(): void {
   const errorCount = problems.filter((p) => p.severity === 'error').length
   const warningCount = problems.length - errorCount
 
-  if (format === 'json') {
-    process.stdout.write(
-      JSON.stringify(
-        { file: filePath, routesChecked: routes.length, problems, errorCount, warningCount },
-        null,
-        2
-      ) + '\n'
-    )
+  if (format === 'json' || format === 'yaml') {
+    const result = { file: filePath, routesChecked: routes.length, problems, errorCount, warningCount }
+    process.stdout.write(format === 'json' ? JSON.stringify(result, null, 2) + '\n' : toYaml(result))
     process.exit(errorCount > 0 ? 1 : 0)
   }
 
@@ -111,6 +106,45 @@ function main(): void {
 
   process.stdout.write(`${errorCount} error(s), ${warningCount} warning(s)\n`)
   process.exit(errorCount > 0 ? 1 : 0)
+}
+
+interface JsonResult {
+  file: string
+  routesChecked: number
+  problems: Problem[]
+  errorCount: number
+  warningCount: number
+}
+
+function toYaml(result: JsonResult): string {
+  const lines: string[] = [
+    `file: ${yamlString(result.file)}`,
+    `routesChecked: ${result.routesChecked}`,
+  ]
+
+  if (result.problems.length === 0) {
+    lines.push('problems: []')
+  } else {
+    lines.push('problems:')
+    for (const p of result.problems) {
+      lines.push(`  - line: ${p.line}`)
+      lines.push(`    col: ${p.col}`)
+      lines.push(`    length: ${p.length}`)
+      lines.push(`    severity: ${p.severity}`)
+      lines.push(`    rule: ${p.rule}`)
+      lines.push(`    message: ${yamlString(p.message)}`)
+    }
+  }
+
+  lines.push(`errorCount: ${result.errorCount}`, `warningCount: ${result.warningCount}`)
+  return lines.join('\n') + '\n'
+}
+
+// JSON's string escaping (\", \\, \n, ...) is a valid subset of YAML's
+// double-quoted scalar escaping, so JSON.stringify doubles as a YAML
+// string quoter without pulling in a YAML library.
+function yamlString(value: string): string {
+  return JSON.stringify(value)
 }
 
 function printProblem(

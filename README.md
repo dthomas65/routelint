@@ -108,6 +108,35 @@ Parse errors and lint findings share the same shape (`rule` is
 `"parse-error"` for the former) and are sorted together by line and column,
 so a tool can walk `problems` in one pass without merging two lists itself.
 
+### YAML output
+
+Pass `--format yaml` for the same document as `--format json`, serialized as
+YAML instead, for tools that prefer to read config-shaped output that way:
+
+```
+node dist/cli.js --format yaml routes.txt
+```
+
+```yaml
+file: "routes.txt"
+routesChecked: 5
+problems:
+  - line: 3
+    col: 1
+    length: 3
+    severity: warning
+    rule: method-case
+    message: "HTTP method \"get\" should be uppercase (\"GET\")"
+  - line: 3
+    col: 1
+    length: 14
+    severity: error
+    rule: duplicate-route
+    message: "route \"GET /users/:id\" duplicates the one declared on line 2"
+errorCount: 3
+warningCount: 1
+```
+
 ## Checks implemented so far
 
 - unknown HTTP method
